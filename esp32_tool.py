@@ -155,7 +155,7 @@ def _require(condition: bool, message: str = "Invalid binary file") -> None:
         raise ValueError(message)
 
 
-def _parse_segment(data: bytes, offset: int) -> tuple[SegmentInfo, int]:
+def _parse_segment(data: bytearray, offset: int) -> tuple[SegmentInfo, int]:
     _require(
         offset + SEGMENT_HEADER_SIZE <= len(data),
         f"Invalid binary file: segment header at offset {offset:#010x} exceeds file size",
@@ -208,7 +208,7 @@ def parse_image(data: bytearray) -> ParsedImage:
         wp_pin,
         drive_settings,
         chip_id,
-        _,  # reserved byte, must be zero
+        _,  # reserved byte
         min_chip_rev,
         max_chip_rev,
         hash_appended,
@@ -255,7 +255,7 @@ def _validate_footer(data: bytearray, parsed: ParsedImage) -> ValidationResult:
 
     calculated_sha256: bytes | None = None
     sha256_is_valid = True
-    if parsed.hash_appended:
+    if parsed.hash_appended and parsed.sha256_offset is not None:
         calculated_sha256 = calculate_sha256(
             bytes(calculate_sha256_payload(data, parsed.hash_appended))
         )
@@ -324,7 +324,11 @@ def print_info(parsed: ParsedImage, data: bytearray) -> None:
     print_validation(
         "Checksum", data[parsed.checksum_offset], validation.calculated_checksum
     )
-    if parsed.hash_appended:
+    if (
+        parsed.hash_appended
+        and parsed.sha256_offset is not None
+        and validation.calculated_sha256 is not None
+    ):
         sha256_hash = bytes(
             data[parsed.sha256_offset : parsed.sha256_offset + SHA256_SIZE]
         )
@@ -342,7 +346,11 @@ def fix_image(parsed: ParsedImage, data: bytearray, binary_file: str) -> int:
         print(
             f"Checksum is already valid, no need to fix ({validation.calculated_checksum:#04x})."
         )
-        if parsed.hash_appended:
+        if (
+            parsed.hash_appended
+            and parsed.sha256_offset is not None
+            and validation.calculated_sha256 is not None
+        ):
             print(
                 f"SHA256 hash is already valid, no need to fix ({validation.calculated_sha256.hex()})."
             )
@@ -355,7 +363,12 @@ def fix_image(parsed: ParsedImage, data: bytearray, binary_file: str) -> int:
             f"Checksum fixed: {old_checksum:#04x} -> {validation.calculated_checksum:#04x}."
         )
 
-    if parsed.hash_appended and not validation.sha256_is_valid:
+    if (
+        parsed.hash_appended
+        and not validation.sha256_is_valid
+        and parsed.sha256_offset is not None
+        and validation.calculated_sha256 is not None
+    ):
         # Recalculate SHA256 over the final state of data (checksum already patched above).
         new_sha256 = calculate_sha256(bytes(calculate_sha256_payload(data, True)))
         old_sha256 = bytes(
